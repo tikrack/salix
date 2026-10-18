@@ -1,19 +1,28 @@
-SALAM ?= salam
+# Convenience targets around the Salam toolchain.
+#
+#   make run     build and run the demo (engine from orm.ini)
+#   make build   compile a native executable named orm_demo
+#   make format  format every Salam source in place
+#   make check   type-check the program without codegen
+#   make clean   remove build artifacts and local databases
 
-.PHONY: check build run fmt clean
+ENTRY   := main.salam
+BIN     := orm_demo
+SOURCES := $(ENTRY) src/orm.salam
 
-check:
-	$(SALAM) check main.salam
-
-build:
-	$(SALAM) build main.salam --output=orm_demo
+.PHONY: run build format check clean
 
 run:
-	$(SALAM) run main.salam
+	salam run $(ENTRY)
 
-fmt:
-	$(SALAM) format src/orm.salam
-	$(SALAM) format main.salam
+build:
+	salam build $(ENTRY) --output=$(BIN)
+
+format:
+	salam format .
+
+check:
+	salam inspect $(ENTRY) --emit-symbol > /dev/null
 
 clean:
-	rm -f orm_demo orm_demo.db
+	rm -f $(BIN) *.db *.sqlite *.sqlite3 *.o *.out
