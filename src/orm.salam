@@ -1,3 +1,7 @@
+// orm.salam - a small, engine-agnostic ORM for the Salam programming
+// language. It speaks SQLite, MySQL/MariaDB and PostgreSQL through the
+// standard db.* drivers, and it is configured from an INI file.
+
 package orm
 
 import db
@@ -5,265 +9,102 @@ import db.sqlite
 import db.mysql
 import db.postgres
 import config
-import collections
-import os
 import str
+import os
 
-const V_NULL := 0
-const V_INT := 1
-const V_FLOAT := 2
-const V_TEXT := 3
-const V_BOOL := 4
+const E_SQLITE := "sqlite"
+const E_MYSQL := "mysql"
+const E_POSTGRES := "postgres"
 
-const SQLITE := "sqlite"
-const MYSQL := "mysql"
-const POSTGRES := "postgres"
+const K_NULL := 0
+const K_INT := 1
+const K_FLOAT := 2
+const K_BOOL := 3
+const K_TEXT := 4
 
+// Value is a dynamically typed SQL value: the currency exchanged between a
+// model and the database. Models return Values from Get and receive them in
+// Set, and the ORM renders them into engine-specific SQL.
 pub struct Value:
-    pub kind: int = V_NULL
+    pub kind: int = K_NULL
     pub i: i64 = 0
     pub f: f64 = 0.0
-    pub s: str = ""
     pub b: bool = false
+    pub s: str = ""
 
     pub static func Null(): Value:
         ret Value {}
     end
+
     pub static func Int(v: i64): Value:
-        ret Value { kind = V_INT, i = v }
+        ret Value { kind = K_INT, i = v }
     end
+
     pub static func Float(v: f64): Value:
-        ret Value { kind = V_FLOAT, f = v }
+        ret Value { kind = K_FLOAT, f = v }
     end
-    pub static func Text(v: str): Value:
-        ret Value { kind = V_TEXT, s = v }
-    end
+
     pub static func Bool(v: bool): Value:
-        ret Value { kind = V_BOOL, b = v }
+        ret Value { kind = K_BOOL, b = v }
+    end
+
+    pub static func Text(v: str): Value:
+        ret Value { kind = K_TEXT, s = v }
     end
 
     pub func IsNull(): bool:
-        ret this.kind == V_NULL
+        ret this.kind == K_NULL
     end
+
+    pub func Kind(): int:
+        ret this.kind
+    end
+
     pub func AsInt(): i64:
-        if this.kind == V_INT: ret this.i end
-        if this.kind == V_FLOAT: ret this.f as i64 end
-        if this.kind == V_BOOL:
+        if this.kind == K_INT: ret this.i end
+        if this.kind == K_FLOAT: ret this.f as i64 end
+        if this.kind == K_BOOL:
             if this.b: ret 1 end
             ret 0
         end
-        if this.kind == V_TEXT: ret str.ToInt(this.s) end
+        if this.kind == K_TEXT: ret str.ToInt(this.s) end
         ret 0
     end
+
     pub func AsFloat(): f64:
-        if this.kind == V_FLOAT: ret this.f end
-        if this.kind == V_INT: ret this.i as f64 end
-        if this.kind == V_BOOL:
+        if this.kind == K_FLOAT: ret this.f end
+        if this.kind == K_INT: ret this.i as f64 end
+        if this.kind == K_BOOL:
             if this.b: ret 1.0 end
             ret 0.0
         end
-        if this.kind == V_TEXT: ret str.ToFloat(this.s) end
+        if this.kind == K_TEXT: ret str.ToFloat(this.s) end
         ret 0.0
     end
+
+    pub func AsBool(): bool:
+        if this.kind == K_BOOL: ret this.b end
+        if this.kind == K_INT: ret this.i != 0 end
+        if this.kind == K_FLOAT: ret this.f != 0.0 end
+        if this.kind == K_TEXT: ret this.s == "true" or this.s == "1" end
+        ret false
+    end
+
     pub func AsText(): str:
-        if this.kind == V_TEXT: ret this.s end
-        if this.kind == V_INT: ret str.FromInt(this.i) end
-        if this.kind == V_FLOAT: ret str.FromFloat(this.f) end
-        if this.kind == V_BOOL:
+        if this.kind == K_TEXT: ret this.s end
+        if this.kind == K_INT: ret str.FromInt(this.i) end
+        if this.kind == K_FLOAT: ret str.FromFloat(this.f) end
+        if this.kind == K_BOOL:
             if this.b: ret "true" end
             ret "false"
         end
         ret ""
     end
-    pub func AsBool(): bool:
-        if this.kind == V_BOOL: ret this.b end
-        if this.kind == V_INT: ret this.i != 0 end
-        if this.kind == V_FLOAT: ret this.f != 0.0 end
-        if this.kind == V_TEXT: ret this.s == "true" or this.s == "1" end
-        ret false
-    end
 end
 
-pub struct Row:
-    pub cols: Vector<str> = Vector {} as Vector<str>
-    pub vals: Vector<Value> = Vector {} as Vector<Value>
-
-    pub func Index(name: str): int:
-        repeat this.cols.len() in i:
-            if this.cols.get(i) == name: ret i end
-        end
-        ret 0 - 1
-    end
-    pub func Has(name: str): bool:
-        ret this.Index(name) >= 0
-    end
-    pub func Get(name: str): Value:
-        i := this.Index(name)
-        if i >= 0: ret this.vals.get(i) end
-        ret Value.Null()
-    end
-    pub func GetInt(name: str): i64:
-        ret this.Get(name).AsInt()
-    end
-    pub func GetFloat(name: str): f64:
-        ret this.Get(name).AsFloat()
-    end
-    pub func GetText(name: str): str:
-        ret this.Get(name).AsText()
-    end
-    pub func GetBool(name: str): bool:
-        ret this.Get(name).AsBool()
-    end
-    pub func Count(): int:
-        ret this.cols.len()
-    end
-    pub func NameAt(i: int): str:
-        ret this.cols.get(i)
-    end
-    pub func ValueAt(i: int): Value:
-        ret this.vals.get(i)
-    end
-    pub func Free():
-        this.cols.free()
-        this.vals.free()
-    end
-end
-
-pub struct DBConfig:
-    pub engine: str = SQLITE
-    pub host: str = "localhost"
-    pub port: int = 0
-    pub user: str = ""
-    pub password: str = ""
-    pub name: str = ""
-    pub path: str = ""
-    pub debug: bool = false
-end
-
-pub struct Session:
-    pub conn: dyn db.Connection
-    pub dialect: str = SQLITE
-    pub debug: bool = false
-
-    pub func Kind(): str:
-        ret this.conn.Kind()
-    end
-    pub func Ok(): bool:
-        ret this.conn.Ok()
-    end
-    pub func Ping(): bool:
-        ret this.conn.Ping()
-    end
-    pub func Error(): str:
-        ret this.conn.Error()
-    end
-    pub func Close(): int:
-        ret this.conn.Close()
-    end
-    pub func Ident(name: str): str:
-        if this.dialect == MYSQL:
-            ret "`" + name + "`"
-        end
-        ret "\"" + name + "\""
-    end
-    pub func Literal(v: Value): str:
-        if v.kind == V_NULL: ret "NULL" end
-        if v.kind == V_INT: ret str.FromInt(v.i) end
-        if v.kind == V_FLOAT: ret str.FromFloat(v.f) end
-        if v.kind == V_BOOL:
-            if this.dialect == POSTGRES:
-                if v.b: ret "TRUE" end
-                ret "FALSE"
-            end
-            if v.b: ret "1" end
-            ret "0"
-        end
-        ret this.conn.Quote(v.s)
-    end
-    pub func Run(sql: str): int:
-        if this.debug: println "[salam-orm]", sql end
-        ret this.conn.Exec(sql)
-    end
-    pub func Query(sql: str): Vector<Row>:
-        mut out := Vector {} as Vector<Row>
-        if this.debug: println "[salam-orm]", sql end
-        r := this.conn.Query(sql)
-        if not r.Ok():
-            _ := r.Close()
-            ret out
-        end
-        n := r.ColumnCount()
-        mut cols := Vector {} as Vector<str>
-        repeat n in i:
-            cols.push(r.ColumnName(i))
-        end
-        until r.Next():
-            mut vals := Vector {} as Vector<Value>
-            repeat n in i:
-                if r.IsNull(i):
-                    vals.push(Value.Null())
-                else:
-                    t := r.ColumnType(i)
-                    if t == db.TYPE_FLOAT:
-                        vals.push(Value.Float(r.Float(i)))
-                    else t == db.TYPE_INT:
-                        vals.push(Value.Int(r.Int64(i)))
-                    else:
-                        vals.push(Value.Text(r.Text(i)))
-                    end
-                end
-            end
-            out.push(Row { cols = collections.clone(cols), vals = vals })
-        end
-        _ := r.Close()
-        cols.free()
-        ret out
-    end
-end
-
-pub interface Model:
-    func TableName(): str
-    func PrimaryKey(): str
-    func AutoPrimaryKey(): bool
-    func ColumnCount(): int
-    func ColumnName(i: int): str
-    func ColumnValue(i: int): Value
-    func Assign(col: str, v: Value): bool
-end
-
-pub struct Repo<T: Model>:
-    pub session: Session
-    pub proto: T
-
-    pub func Save(m: T): bool:
-        ret Insert(this.session, m)
-    end
-    pub func Add(m: T): bool:
-        ret Insert(this.session, m)
-    end
-    pub func Modify(m: T): bool:
-        ret Update(this.session, m)
-    end
-    pub func Remove(id: i64): bool:
-        ret DeleteById(this.session, this.proto, id)
-    end
-    pub func RemoveWhere(where: str): bool:
-        ret DeleteWhere(this.session, this.proto, where)
-    end
-    pub func Fetch(id: i64, out &: T): bool:
-        ret FindById(this.session, this.proto, id, out)
-    end
-    pub func List(where: str, order: str, limit: int): Vector<T>:
-        ret FindAll(this.session, this.proto, where, order, limit)
-    end
-    pub func Total(where: str): int:
-        ret CountWhere(this.session, this.proto, where)
-    end
-    pub func Close(): int:
-        ret this.session.Close()
-    end
-end
-
+// Column describes one table column. A model reports its schema as an
+// ordered list of Columns; the ORM derives names, types, the primary key
+// and auto-increment behaviour from it.
 pub struct Column:
     pub name: str = ""
     pub ctype: str = "text"
@@ -272,335 +113,562 @@ pub struct Column:
     pub not_null: bool = false
     pub unique: bool = false
     pub default: str = ""
+
+    pub func IsPrimary(): bool:
+        ret this.pk
+    end
+
+    pub func IsAuto(): bool:
+        ret this.auto
+    end
 end
 
-pub struct Table:
+// Row is a materialised result row: ordered column names and the Values that
+// belong to them, addressable by name or by position.
+pub struct Row:
+    pub cols: Vector<str> = Vector {} as Vector<str>
+    pub vals: Vector<Value> = Vector {} as Vector<Value>
+
+    pub func Index(name: str): int:
+        mut k := 0
+        until k < this.cols.len():
+            if this.cols.get(k) == name:
+                ret k
+            end
+            k = k + 1
+        end
+        ret 0 - 1
+    end
+
+    pub func Has(name: str): bool:
+        ret this.Index(name) >= 0
+    end
+
+    pub func Get(name: str): Value:
+        i := this.Index(name)
+        if i >= 0:
+            ret this.vals.get(i)
+        end
+        ret Value {}
+    end
+
+    pub func At(i: int): Value:
+        if i >= 0 and i < this.vals.len():
+            ret this.vals.get(i)
+        end
+        ret Value {}
+    end
+
+    pub func NameAt(i: int): str:
+        if i >= 0 and i < this.cols.len():
+            ret this.cols.get(i)
+        end
+        ret ""
+    end
+
+    pub func Count(): int:
+        ret this.cols.len()
+    end
+
+    pub func Int(name: str): i64:
+        ret this.Get(name).AsInt()
+    end
+
+    pub func Float(name: str): f64:
+        ret this.Get(name).AsFloat()
+    end
+
+    pub func Bool(name: str): bool:
+        ret this.Get(name).AsBool()
+    end
+
+    pub func Text(name: str): str:
+        ret this.Get(name).AsText()
+    end
+
+    pub func IsNull(name: str): bool:
+        ret this.Get(name).IsNull()
+    end
+
+    pub func Free():
+        this.cols.free()
+        this.vals.free()
+    end
+end
+
+// Config holds the connection settings loaded from the configuration file.
+// engine selects the driver; the remaining fields are the usual SQLite path
+// or the MySQL/PostgreSQL host, port, user, password and database name.
+pub struct Config:
+    pub engine: str = E_SQLITE
+    pub host: str = "127.0.0.1"
+    pub port: int = 0
+    pub user: str = ""
+    pub password: str = ""
     pub name: str = ""
-    pub cols: Vector<Column> = Vector {} as Vector<Column>
+    pub path: str = ""
+    pub debug: bool = false
+
+    pub func IsSqlite(): bool:
+        ret this.engine == E_SQLITE
+    end
+
+    pub func IsMysql(): bool:
+        ret this.engine == E_MYSQL
+    end
+
+    pub func IsPostgres(): bool:
+        ret this.engine == E_POSTGRES
+    end
 end
 
-pub struct Migrations:
-    pub items: Vector<db.Migration> = Vector {} as Vector<db.Migration>
+// Session owns an open connection and the dialect that goes with it. Every
+// Repo works through a Session, and every helper that renders SQL takes a
+// Session so it can quote identifiers and literals for the right engine.
+pub struct Session:
+    pub conn: dyn db.Connection
+    pub engine: str = E_SQLITE
+    pub debug: bool = false
 
-    pub static func New(): Migrations:
-        ret Migrations {}
+    pub func Kind(): str:
+        ret this.conn.Kind()
     end
-    pub func Add(version: int, name: str, up: str, down: str): Migrations:
-        mut items := collections.clone(this.items)
-        items.push(db.Migration { version = version, name = name, up = up, down = down })
-        ret Migrations { items = items }
+
+    pub func Ok(): bool:
+        ret this.conn.Ok()
     end
+
+    pub func Ping(): bool:
+        ret this.conn.Ping()
+    end
+
+    pub func Error(): str:
+        ret this.conn.Error()
+    end
+
+    pub func Close(): int:
+        ret this.conn.Close()
+    end
+
+    pub func LastInsertId(): i64:
+        ret this.conn.LastInsertId()
+    end
+
+    pub func Changes(): i64:
+        ret this.conn.Changes()
+    end
+
+    pub func Ident(name: str): str:
+        if this.engine == E_MYSQL:
+            ret "`" + name + "`"
+        end
+        ret "\"" + name + "\""
+    end
+
+    pub func IdentList(names: Vector<str>): Vector<str>:
+        mut out := Vector {} as Vector<str>
+        repeat names.len() in i:
+            out.push(this.Ident(names.get(i)))
+        end
+        ret out
+    end
+
+    pub func Literal(v: Value): str:
+        if v.kind == K_NULL: ret "NULL" end
+        if v.kind == K_INT: ret str.FromInt(v.i) end
+        if v.kind == K_FLOAT: ret str.FromFloat(v.f) end
+        if v.kind == K_BOOL:
+            if this.engine == E_POSTGRES:
+                if v.b: ret "TRUE" end
+                ret "FALSE"
+            end
+            if v.b: ret "1" end
+            ret "0"
+        end
+        ret this.conn.Quote(v.s)
+    end
+
+    pub func Exec(sql: str): int:
+        if this.debug: println "[orm] ", sql end
+        ret this.conn.Exec(sql)
+    end
+
+    pub func Query(sql: str): Vector<Row>:
+        if this.debug: println "[orm] ", sql end
+        ret ReadRows(this.conn, sql)
+    end
+
+    pub func Begin(): dyn db.Tx:
+        ret this.conn.Begin()
+    end
+
+    pub func One(sql: str): Row:
+        rows := this.Query(sql)
+        if rows.len() > 0:
+            r := rows.get(0)
+            rows.free()
+            ret r
+        end
+        rows.free()
+        ret Row {}
+    end
+end
+
+// Model is what a table-backed type implements. Table names the table,
+// ColumnCount and Column describe the schema, and Get and Set move values
+// in and out by column name. Primary key, auto-increment and column types
+// are derived from the Columns a model declares.
+pub interface Model:
+    func Table(): str
+    func ColumnCount(): int
+    func Column(i: int): Column
+    func Get(col: str): Value
+    func Set(col: str, v: Value): bool
+end
+
+// SchemaBuilder declares a model's columns in order. Add appends a plain
+// column; Key appends an auto-increment integer primary key.
+pub struct SchemaBuilder:
+    pub items: Vector<Column> = Vector {} as Vector<Column>
+
+    pub func Add(name: str, ctype: str): SchemaBuilder:
+        mut next := SchemaBuilder {}
+        next.items = this.items.copy(0)
+        next.items.push(Column { name = name, ctype = ctype })
+        ret next
+    end
+
+    pub func Key(name: str): SchemaBuilder:
+        mut next := SchemaBuilder {}
+        next.items = this.items.copy(0)
+        next.items.push(Column { name = name, ctype = "i64", pk = true, auto = true, not_null = true })
+        ret next
+    end
+
+    pub func TextCol(name: str): SchemaBuilder:
+        ret this.Add(name, "text")
+    end
+
+    pub func IntCol(name: str): SchemaBuilder:
+        ret this.Add(name, "i64")
+    end
+
+    pub func BoolCol(name: str): SchemaBuilder:
+        ret this.Add(name, "bool")
+    end
+
+    pub func FloatCol(name: str): SchemaBuilder:
+        ret this.Add(name, "float")
+    end
+
     pub func Count(): int:
         ret this.items.len()
     end
+
+    pub func Column(i: int): Column:
+        if i >= 0 and i < this.items.len():
+            ret this.items.get(i)
+        end
+        ret Column {}
+    end
+
+    pub func Index(name: str): int:
+        mut k := 0
+        until k < this.items.len():
+            if this.items.get(k).name == name:
+                ret k
+            end
+            k = k + 1
+        end
+        ret 0 - 1
+    end
+
     pub func Free():
         this.items.free()
     end
 end
 
-func join_parts(parts: Vector<str>, sep: str): str:
-    ret str.Join(parts, sep)
+// Migration is one versioned schema step. Migrator is an ordered list of
+// them.
+pub struct Migration:
+    pub version: int = 0
+    pub name: str = ""
+    pub up: str = ""
+    pub down: str = ""
 end
 
-pub func LoadConfig(path: str): DBConfig:
-    mut out := DBConfig {}
-    if not os.Exists(path):
-        ret out
+pub struct Migrator:
+    pub items: Vector<Migration> = Vector {} as Vector<Migration>
+
+    pub func Count(): int:
+        ret this.items.len()
     end
-    mut c := config.LoadINI(path)
-    defer config.Free(c)
-    out.engine = config.GetOr(c, "database.engine", SQLITE)
-    out.host = config.GetOr(c, "database.host", "localhost")
-    out.port = config.GetInt(c, "database.port", 0) as int
-    out.user = config.GetOr(c, "database.user", "")
-    out.password = config.GetOr(c, "database.password", "")
-    out.name = config.GetOr(c, "database.name", "")
-    out.path = config.GetOr(c, "database.path", "")
-    out.debug = config.GetBool(c, "database.debug", false)
-    ret out
 end
 
-pub func OpenConfig(cfg: DBConfig): Session:
-    if cfg.engine == MYSQL:
-        mut p := cfg.port
-        if p == 0: p = 3306 end
-        d := mysql.Open(cfg.host, cfg.user, cfg.password, cfg.name, p)
-        ret Session { conn = mysql.Conn(d), dialect = MYSQL, debug = cfg.debug }
+// Repo is a generic repository over one model type T.
+pub struct Repo<T: Model>:
+    pub model: T = T {}
+    pub session: Session
+
+    pub func Table(): str:
+        ret this.model.Table()
     end
-    if cfg.engine == POSTGRES:
-        mut p := cfg.port
-        if p == 0: p = 5432 end
-        d := postgres.OpenFull(cfg.host, p, cfg.user, cfg.password, cfg.name)
-        ret Session { conn = postgres.Conn(d), dialect = POSTGRES, debug = cfg.debug }
+
+    pub func PrimaryKey(): str:
+        ret keyName(this.model)
     end
-    d := sqlite.Open(cfg.path)
-    ret Session { conn = sqlite.Conn(d), dialect = SQLITE, debug = cfg.debug }
-end
 
-pub func OpenFile(path: str): Session:
-    ret OpenConfig(LoadConfig(path))
-end
-
-pub func Connect(engine: str, path: str): Session:
-    ret OpenConfig(DBConfig { engine = engine, path = path })
-end
-
-pub func OpenMemory(): Session:
-    ret Connect(SQLITE, ":memory:")
-end
-
-pub func SelectSQL(s: Session, table: str, where: str, order: str, limit: int): str:
-    mut sql := "SELECT * FROM " + s.Ident(table)
-    if where != "":
-        sql = sql + " WHERE " + where
+    pub func CreateTable(): bool:
+        sql := CreateTableSQL(this.session, this.model.Table(), this.model)
+        ret this.session.Exec(sql) == 0
     end
-    if order != "":
-        sql = sql + " ORDER BY " + order
-    end
-    if limit > 0:
-        sql = sql + " LIMIT " + str.FromInt(limit as i64)
-    end
-    ret sql
-end
 
-pub func Insert<T: Model>(s: Session, m: T): bool:
-    n := m.ColumnCount()
-    mut cols := Vector {} as Vector<str>
-    mut vals := Vector {} as Vector<str>
-    repeat n in i:
-        name := m.ColumnName(i)
-        if m.AutoPrimaryKey() and name == m.PrimaryKey():
-            continue
+    pub func DropTable(): bool:
+        ret this.session.Exec("DROP TABLE " + this.session.Ident(this.model.Table())) == 0
+    end
+
+    pub func DropTableIfExists(): bool:
+        ret this.session.Exec("DROP TABLE IF EXISTS " + this.session.Ident(this.model.Table())) == 0
+    end
+
+    pub func TableExists(): bool:
+        ret HasTable(this.session, this.model.Table())
+    end
+
+    pub func Save(item: T): i64:
+        mut sql := InsertSQL(this.session, item.Table(), item)
+        if this.session.engine == E_POSTGRES:
+            sql = sql + " RETURNING " + this.session.Ident(keyName(item))
+            ret db.QueryInt64(this.session.conn, sql)
         end
-        cols.push(s.Ident(name))
-        vals.push(s.Literal(m.ColumnValue(i)))
-    end
-    sql := "INSERT INTO " + s.Ident(m.TableName()) + " (" + join_parts(cols, ", ") + ") VALUES (" + join_parts(vals, ", ") + ")"
-    ok := s.Run(sql) == 0
-    cols.free()
-    vals.free()
-    ret ok
-end
-
-pub func Update<T: Model>(s: Session, m: T): bool:
-    n := m.ColumnCount()
-    pk := m.PrimaryKey()
-    mut sets := Vector {} as Vector<str>
-    mut id := Value.Null()
-    repeat n in i:
-        name := m.ColumnName(i)
-        v := m.ColumnValue(i)
-        if name == pk:
-            id = v
-        else:
-            sets.push(s.Ident(name) + " = " + s.Literal(v))
+        if this.session.Exec(sql) != 0:
+            ret 0 - 1
         end
+        ret this.session.conn.LastInsertId()
     end
-    if sets.is_empty() or id.IsNull():
-        sets.free()
-        ret false
+
+    pub func Insert(item: T): i64:
+        ret this.Save(item)
     end
-    sql := "UPDATE " + s.Ident(m.TableName()) + " SET " + join_parts(sets, ", ") + " WHERE " + s.Ident(pk) + " = " + s.Literal(id)
-    ok := s.Run(sql) == 0
-    sets.free()
-    ret ok
-end
 
-pub func DeleteById<T: Model>(s: Session, proto: T, id: i64): bool:
-    sql := "DELETE FROM " + s.Ident(proto.TableName()) + " WHERE " + s.Ident(proto.PrimaryKey()) + " = " + s.Literal(Value.Int(id))
-    ret s.Run(sql) == 0
-end
-
-pub func DeleteWhere<T: Model>(s: Session, proto: T, where: str): bool:
-    if where == "":
-        ret false
+    pub func Update(item: T): bool:
+        sql := UpdateSQL(this.session, item.Table(), item)
+        ret this.session.Exec(sql) == 0
     end
-    sql := "DELETE FROM " + s.Ident(proto.TableName()) + " WHERE " + where
-    ret s.Run(sql) == 0
-end
 
-pub func Hydrate<T: Model>(row: Row, m &: T): int:
-    n := row.Count()
-    mut applied := 0
-    repeat n in i:
-        if m.Assign(row.NameAt(i), row.ValueAt(i)):
-            applied = applied + 1
+    pub func Delete(id: i64): bool:
+        key := keyName(this.model)
+        sql := "DELETE FROM " + this.session.Ident(this.model.Table()) + " WHERE " + this.session.Ident(key) + " = " + this.session.Literal(Value.Int(id))
+        ret this.session.Exec(sql) == 0
+    end
+
+    pub func DeleteWhere(where: str): bool:
+        mut sql := "DELETE FROM " + this.session.Ident(this.model.Table())
+        if where != "":
+            sql = sql + " WHERE " + where
         end
+        ret this.session.Exec(sql) == 0
     end
-    ret applied
-end
 
-pub func FindById<T: Model>(s: Session, proto: T, id: i64, out &: T): bool:
-    where := s.Ident(proto.PrimaryKey()) + " = " + s.Literal(Value.Int(id))
-    rows := s.Query(SelectSQL(s, proto.TableName(), where, "", 1))
-    mut found := false
-    each row in rows:
-        if not found:
-            _ := Hydrate(row, out)
+    pub func Find(id: i64, out &: T): bool:
+        cond := this.session.Ident(keyName(this.model)) + " = " + this.session.Literal(Value.Int(id))
+        sql := SelectSQL(this.session, this.model.Table(), this.model, cond, "", 1, 0)
+        if this.session.debug: println "[orm] ", sql end
+        r := this.session.conn.Query(sql)
+        if not r.Ok():
+            _ := r.Close()
+            ret false
+        end
+        mut found := false
+        if r.Next():
+            mut item := this.model
+            repeat r.ColumnCount() in i:
+                mut v := Value.Null()
+                if not r.IsNull(i):
+                    k := r.ColumnType(i)
+                    if k == db.TYPE_INT:
+                        v = Value.Int(r.Int64(i))
+                    else:
+                        if k == db.TYPE_FLOAT:
+                            v = Value.Float(r.Float(i))
+                        else:
+                            v = Value.Text(r.Text(i))
+                        end
+                    end
+                end
+                _ := item.Set(r.ColumnName(i), v)
+            end
+            out = item
             found = true
         end
-        row.Free()
+        _ := r.Close()
+        ret found
     end
-    rows.free()
-    ret found
-end
 
-pub func FindAll<T: Model>(s: Session, proto: T, where: str, order: str, limit: int): Vector<T>:
-    mut out := Vector {} as Vector<T>
-    rows := s.Query(SelectSQL(s, proto.TableName(), where, order, limit))
-    each row in rows:
-        mut item := proto
-        _ := Hydrate(row, item)
-        out.push(item)
-        row.Free()
+    func readAll(sql: str): Vector<T>:
+        mut out := Vector {} as Vector<T>
+        r := this.session.conn.Query(sql)
+        if not r.Ok():
+            _ := r.Close()
+            ret out
+        end
+        until r.Next():
+            mut item := this.model
+            repeat r.ColumnCount() in i:
+                mut v := Value.Null()
+                if not r.IsNull(i):
+                    k := r.ColumnType(i)
+                    if k == db.TYPE_INT:
+                        v = Value.Int(r.Int64(i))
+                    else:
+                        if k == db.TYPE_FLOAT:
+                            v = Value.Float(r.Float(i))
+                        else:
+                            v = Value.Text(r.Text(i))
+                        end
+                    end
+                end
+                _ := item.Set(r.ColumnName(i), v)
+            end
+            out.push(item)
+        end
+        _ := r.Close()
+        ret out
     end
-    rows.free()
-    ret out
-end
 
-pub func CountWhere<T: Model>(s: Session, proto: T, where: str): int:
-    mut sql := "SELECT COUNT(*) AS n FROM " + s.Ident(proto.TableName())
-    if where != "":
-        sql = sql + " WHERE " + where
+    pub func All(): Vector<T>:
+        ret this.readAll(SelectSQL(this.session, this.model.Table(), this.model, "", "", 0 - 1, 0))
     end
-    rows := s.Query(sql)
-    mut n := 0
-    each row in rows:
-        n = row.GetInt("n") as int
-        row.Free()
+
+    pub func List(where: str, order: str, limit: i64): Vector<T>:
+        ret this.readAll(SelectSQL(this.session, this.model.Table(), this.model, where, order, limit, 0))
     end
-    rows.free()
-    ret n
-end
 
-pub func NewRepo<T: Model>(s: Session, proto: T): Repo<T>:
-    ret Repo { session = s, proto = proto }
-end
-
-pub func Eq(s: Session, col: str, v: Value): str:
-    ret s.Ident(col) + " = " + s.Literal(v)
-end
-pub func Ne(s: Session, col: str, v: Value): str:
-    ret s.Ident(col) + " <> " + s.Literal(v)
-end
-pub func Gt(s: Session, col: str, v: Value): str:
-    ret s.Ident(col) + " > " + s.Literal(v)
-end
-pub func Gte(s: Session, col: str, v: Value): str:
-    ret s.Ident(col) + " >= " + s.Literal(v)
-end
-pub func Lt(s: Session, col: str, v: Value): str:
-    ret s.Ident(col) + " < " + s.Literal(v)
-end
-pub func Lte(s: Session, col: str, v: Value): str:
-    ret s.Ident(col) + " <= " + s.Literal(v)
-end
-pub func Like(s: Session, col: str, pattern: str): str:
-    ret s.Ident(col) + " LIKE " + s.Literal(Value.Text(pattern))
-end
-pub func IsNull(s: Session, col: str): str:
-    ret s.Ident(col) + " IS NULL"
-end
-pub func NotNull(s: Session, col: str): str:
-    ret s.Ident(col) + " IS NOT NULL"
-end
-pub func InList(s: Session, col: str, vals: Vector<Value>): str:
-    mut parts := Vector {} as Vector<str>
-    repeat vals.len() in i:
-        parts.push(s.Literal(vals.get(i)))
+    pub func Page(where: str, order: str, limit: i64, offset: i64): Vector<T>:
+        ret this.readAll(SelectSQL(this.session, this.model.Table(), this.model, where, order, limit, offset))
     end
-    out := s.Ident(col) + " IN (" + join_parts(parts, ", ") + ")"
-    parts.free()
-    ret out
-end
-pub func And(parts: Vector<str>): str:
-    ret "(" + join_parts(parts, " AND ") + ")"
-end
-pub func Or(parts: Vector<str>): str:
-    ret "(" + join_parts(parts, " OR ") + ")"
-end
-pub func Not(cond: str): str:
-    ret "NOT (" + cond + ")"
-end
-pub func Asc(col: str): str:
-    ret col + " ASC"
-end
-pub func Desc(col: str): str:
-    ret col + " DESC"
-end
-pub func Raw(sql: str): str:
-    ret sql
+
+    pub func Total(where: str): i64:
+        ret db.QueryInt64(this.session.conn, CountSQL(this.session, this.model.Table(), where))
+    end
+
+    pub func Count(where: str): i64:
+        ret this.Total(where)
+    end
+
+    pub func Exists(id: i64): bool:
+        cond := this.session.Ident(keyName(this.model)) + " = " + this.session.Literal(Value.Int(id))
+        ret this.Total(cond) > 0
+    end
+
+    pub func Scalar(sql: str): i64:
+        ret db.QueryInt64(this.session.conn, sql)
+    end
+
+    // SaveMany inserts a batch inside one transaction. It returns the number
+    // of rows written, or -1 if the transaction rolled back.
+    pub func SaveMany(items: Vector<T>): int:
+        mut stmts := Vector {} as Vector<str>
+        defer stmts.free()
+        repeat items.len() in i:
+            item := items.get(i)
+            stmts.push(InsertSQL(this.session, item.Table(), item))
+        end
+        if not InTx(this.session, stmts):
+            ret 0 - 1
+        end
+        ret items.len()
+    end
+
+    // First returns the first row matching a condition, or false when none.
+    pub func First(where: str, order: str, out &: T): bool:
+        rows := this.List(where, order, 1)
+        defer rows.free()
+        if rows.len() > 0:
+            out = rows.get(0)
+            ret true
+        end
+        ret false
+    end
+
+    // Max/Min/Sum/Avg run an aggregate over a numeric column.
+    pub func Aggregate(fn: str, col: str, where: str): i64:
+        mut sql := "SELECT " + fn + "(" + this.session.Ident(col) + ") AS v FROM " + this.session.Ident(this.model.Table())
+        if where != "":
+            sql = sql + " WHERE " + where
+        end
+        ret db.QueryInt64(this.session.conn, sql)
+    end
+
+    pub func Max(col: str, where: str): i64:
+        ret this.Aggregate("MAX", col, where)
+    end
+
+    pub func Min(col: str, where: str): i64:
+        ret this.Aggregate("MIN", col, where)
+    end
+
+    pub func Sum(col: str, where: str): i64:
+        ret this.Aggregate("SUM", col, where)
+    end
+
+    // UpdateWhere runs a raw UPDATE guarded by a condition string.
+    pub func UpdateWhere(set: str, where: str): bool:
+        mut sql := "UPDATE " + this.session.Ident(this.model.Table()) + " SET " + set
+        if where != "":
+            sql = sql + " WHERE " + where
+        end
+        ret this.session.Exec(sql) == 0
+    end
 end
 
-pub func NewColumn(name: str, ctype: str): Column:
-    ret Column { name = name, ctype = ctype }
-end
-pub func Primary(c: Column): Column:
-    ret Column { name = c.name, ctype = c.ctype, pk = true, not_null = true }
-end
-pub func AutoIncrement(c: Column): Column:
-    ret Column { name = c.name, ctype = c.ctype, pk = true, auto = true, not_null = true }
-end
-pub func NotNullCol(c: Column): Column:
-    ret Column { name = c.name, ctype = c.ctype, pk = c.pk, auto = c.auto, not_null = true, unique = c.unique, default = c.default }
-end
-pub func UniqueCol(c: Column): Column:
-    ret Column { name = c.name, ctype = c.ctype, pk = c.pk, auto = c.auto, not_null = c.not_null, unique = true, default = c.default }
-end
-pub func DefaultCol(c: Column, value: str): Column:
-    ret Column { name = c.name, ctype = c.ctype, pk = c.pk, auto = c.auto, not_null = c.not_null, unique = c.unique, default = value }
+func normalizeEngine(e: str): str:
+    v := str.Trim(e).lower()
+    if v == "sqlite3": ret E_SQLITE end
+    if v == "mariadb": ret E_MYSQL end
+    if v == "pgsql": ret E_POSTGRES end
+    if v == "postgresql": ret E_POSTGRES end
+    if v == "pg": ret E_POSTGRES end
+    ret v
 end
 
-pub func NewTable(name: str): Table:
-    ret Table { name = name }
-end
-pub func AddColumn(t: Table, c: Column): Table:
-    mut cols := collections.clone(t.cols)
-    cols.push(c)
-    ret Table { name = t.name, cols = cols }
-end
-pub func FreeTable(t &: Table):
-    t.cols.free()
-end
-
-pub func MapType(dialect: str, ctype: str): str:
-    if ctype == "int":
-        if dialect == MYSQL: ret "INT" end
+func mapType(engine: str, ctype: str): str:
+    t := ctype.lower()
+    if t == "int" or t == "i32":
+        if engine == E_MYSQL: ret "INT" end
         ret "INTEGER"
     end
-    if ctype == "i64":
-        if dialect == POSTGRES: ret "BIGINT" end
-        if dialect == MYSQL: ret "BIGINT" end
-        ret "INTEGER"
+    if t == "i64" or t == "bigint":
+        ret "BIGINT"
     end
-    if ctype == "float":
-        if dialect == POSTGRES: ret "DOUBLE PRECISION" end
-        if dialect == MYSQL: ret "DOUBLE" end
+    if t == "float" or t == "f64" or t == "double":
+        if engine == E_POSTGRES: ret "DOUBLE PRECISION" end
+        if engine == E_MYSQL: ret "DOUBLE" end
         ret "REAL"
     end
-    if ctype == "bool":
-        if dialect == POSTGRES: ret "BOOLEAN" end
-        if dialect == MYSQL: ret "TINYINT(1)" end
+    if t == "bool" or t == "boolean":
+        if engine == E_POSTGRES: ret "BOOLEAN" end
+        if engine == E_MYSQL: ret "TINYINT(1)" end
         ret "INTEGER"
     end
-    if ctype == "blob":
-        if dialect == POSTGRES: ret "BYTEA" end
+    if t == "blob" or t == "bytes":
+        if engine == E_POSTGRES: ret "BYTEA" end
         ret "BLOB"
     end
     ret "TEXT"
 end
 
-pub func ColumnDef(s: Session, c: Column): str:
+func columnDef(s: Session, c: Column): str:
     if c.auto:
-        if s.dialect == POSTGRES:
+        if s.engine == E_POSTGRES:
             ret s.Ident(c.name) + " BIGSERIAL PRIMARY KEY"
         end
-        if s.dialect == MYSQL:
+        if s.engine == E_MYSQL:
             ret s.Ident(c.name) + " BIGINT AUTO_INCREMENT PRIMARY KEY"
         end
         ret s.Ident(c.name) + " INTEGER PRIMARY KEY AUTOINCREMENT"
     end
-    mut out := s.Ident(c.name) + " " + MapType(s.dialect, c.ctype)
+    mut out := s.Ident(c.name) + " " + mapType(s.engine, c.ctype)
     if c.pk:
         out = out + " PRIMARY KEY"
     end
@@ -616,56 +684,381 @@ pub func ColumnDef(s: Session, c: Column): str:
     ret out
 end
 
-pub func CreateTableSQL(s: Session, t: Table): str:
-    mut defs := Vector {} as Vector<str>
-    repeat t.cols.len() in i:
-        defs.push(ColumnDef(s, t.cols.get(i)))
+func keyName(m: dyn Model): str:
+    mut k := 0
+    until k < m.ColumnCount():
+        if m.Column(k).pk:
+            ret m.Column(k).name
+        end
+        k = k + 1
     end
-    sql := "CREATE TABLE " + s.Ident(t.name) + " (" + join_parts(defs, ", ") + ")"
+    if m.ColumnCount() > 0:
+        ret m.Column(0).name
+    end
+    ret "id"
+end
+
+func freeRowVector(rows: Vector<Row>):
+    repeat rows.len() in i:
+        rows.get(i).Free()
+    end
+    rows.free()
+end
+
+// ---- construction helpers ----
+
+pub func NewColumn(name: str, ctype: str): Column:
+    ret Column { name = name, ctype = ctype }
+end
+
+pub func PrimaryKeyCol(name: str, ctype: str): Column:
+    ret Column { name = name, ctype = ctype, pk = true, not_null = true }
+end
+
+pub func AutoKeyCol(name: str, ctype: str): Column:
+    ret Column { name = name, ctype = ctype, pk = true, auto = true, not_null = true }
+end
+
+pub func NotNull(c: Column): Column:
+    ret Column { name = c.name, ctype = c.ctype, pk = c.pk, auto = c.auto, not_null = true, unique = c.unique, default = c.default }
+end
+
+pub func Unique(c: Column): Column:
+    ret Column { name = c.name, ctype = c.ctype, pk = c.pk, auto = c.auto, not_null = c.not_null, unique = true, default = c.default }
+end
+
+pub func WithDefault(c: Column, value: str): Column:
+    ret Column { name = c.name, ctype = c.ctype, pk = c.pk, auto = c.auto, not_null = c.not_null, unique = c.unique, default = value }
+end
+
+pub func NewSchema(): SchemaBuilder:
+    ret SchemaBuilder {}
+end
+
+// ---- engine and value helpers ----
+
+pub func NormalizeEngine(e: str): str:
+    ret normalizeEngine(e)
+end
+
+pub func MapType(engine: str, ctype: str): str:
+    ret mapType(engine, ctype)
+end
+
+pub func ValueFromRow(r: dyn db.Rows, i: int): Value:
+    if r.IsNull(i):
+        ret Value {}
+    end
+    k := r.ColumnType(i)
+    if k == db.TYPE_INT:
+        ret Value.Int(r.Int64(i))
+    end
+    if k == db.TYPE_FLOAT:
+        ret Value.Float(r.Float(i))
+    end
+    ret Value.Text(r.Text(i))
+end
+
+pub func ReadRows(c: dyn db.Connection, sql: str): Vector<Row>:
+    mut out := Vector {} as Vector<Row>
+    r := c.Query(sql)
+    if not r.Ok():
+        _ := r.Close()
+        ret out
+    end
+    n := r.ColumnCount()
+    until r.Next():
+        mut row := Row {}
+        repeat n in i:
+            row.cols.push(r.ColumnName(i))
+            row.vals.push(ValueFromRow(r, i))
+        end
+        out.push(row)
+    end
+    _ := r.Close()
+    ret out
+end
+
+pub func FreeRows(rows: Vector<Row>):
+    freeRowVector(rows)
+end
+
+pub func Columns(m: dyn Model): Vector<Column>:
+    mut out := Vector {} as Vector<Column>
+    repeat m.ColumnCount() in i:
+        out.push(m.Column(i))
+    end
+    ret out
+end
+
+// ---- configuration and connections ----
+
+pub func LoadConfig(path: str): Config:
+    mut c := Config {}
+    if not os.Exists(path):
+        ret c
+    end
+    cfg := config.LoadINI(path)
+    defer config.Free(cfg)
+    sect := config.Section(cfg, "database")
+    defer config.Free(sect)
+    c.engine = normalizeEngine(config.GetOr(sect, "engine", E_SQLITE))
+    c.host = config.GetOr(sect, "host", "127.0.0.1")
+    c.port = config.GetInt(sect, "port", 0) as int
+    c.user = config.GetOr(sect, "user", "")
+    c.password = config.GetOr(sect, "password", "")
+    c.name = config.GetOr(sect, "name", "")
+    c.path = config.GetOr(sect, "path", "")
+    c.debug = config.GetBool(sect, "debug", false)
+    ret c
+end
+
+pub func Open(cfg: Config): Session:
+    if cfg.engine == E_MYSQL:
+        _ := mysql.LibraryInit()
+        d := mysql.Open(cfg.host, cfg.user, cfg.password, cfg.name, cfg.port)
+        ret Session { conn = mysql.Conn(d), engine = E_MYSQL, debug = cfg.debug }
+    end
+    if cfg.engine == E_POSTGRES:
+        d := postgres.OpenFull(cfg.host, cfg.port, cfg.user, cfg.password, cfg.name)
+        ret Session { conn = postgres.Conn(d), engine = E_POSTGRES, debug = cfg.debug }
+    end
+    d := sqlite.Open(cfg.path)
+    ret Session { conn = sqlite.Conn(d), engine = E_SQLITE, debug = cfg.debug }
+end
+
+pub func OpenFile(path: str): Session:
+    ret Open(Config { engine = E_SQLITE, path = path })
+end
+
+pub func Wrap(conn: dyn db.Connection, engine: str, debug: bool): Session:
+    ret Session { conn = conn, engine = engine, debug = debug }
+end
+
+pub func NewRepo<T: Model>(proto: T, s: Session): Repo<T>:
+    ret Repo { model = proto, session = s }
+end
+
+// ---- migrations ----
+
+pub func NewMigrator(): Migrator:
+    ret Migrator {}
+end
+
+pub func AddMigration(m &: Migrator, version: int, name: str, up: str, down: str):
+    m.items.push(Migration { version = version, name = name, up = up, down = down })
+end
+
+pub func Migrate(s: Session, m: Migrator): int:
+    mut mi := db.NewMigrator()
+    defer db.FreeMigrator(mi)
+    repeat m.items.len() in i:
+        it := m.items.get(i)
+        db.AddMigration(mi, it.version, it.name, it.up, it.down)
+    end
+    ret db.MigrateUp(mi, s.conn)
+end
+
+pub func MigratePending(s: Session, m: Migrator): int:
+    mut mi := db.NewMigrator()
+    defer db.FreeMigrator(mi)
+    repeat m.items.len() in i:
+        it := m.items.get(i)
+        db.AddMigration(mi, it.version, it.name, it.up, it.down)
+    end
+    ret db.PendingCount(mi, s.conn)
+end
+
+pub func SchemaVersion(s: Session): int:
+    mut mi := db.NewMigrator()
+    defer db.FreeMigrator(mi)
+    ret db.SchemaVersion(mi, s.conn)
+end
+
+pub func HasTable(s: Session, name: str): bool:
+    mut sql := ""
+    if s.engine == E_SQLITE:
+        sql = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = " + s.Literal(Value.Text(name))
+    else s.engine == E_MYSQL:
+        sql = "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = " + s.Literal(Value.Text(name))
+    else:
+        sql = "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = " + s.Literal(Value.Text(name))
+    end
+    ret db.QueryInt64(s.conn, sql) > 0
+end
+
+// ---- schema and SQL builders ----
+
+pub func CreateTableSQL(s: Session, table: str, m: dyn Model): str:
+    mut defs := Vector {} as Vector<str>
+    repeat m.ColumnCount() in i:
+        defs.push(columnDef(s, m.Column(i)))
+    end
+    sql := "CREATE TABLE " + s.Ident(table) + " (" + str.Join(defs, ", ") + ")"
     defs.free()
     ret sql
 end
 
-pub func CreateTable(s: Session, t: Table): bool:
-    ret s.Run(CreateTableSQL(s, t)) == 0
-end
-pub func DropTable(s: Session, name: str): bool:
-    ret s.Run("DROP TABLE " + s.Ident(name)) == 0
-end
-pub func DropTableIfExists(s: Session, name: str): bool:
-    ret s.Run("DROP TABLE IF EXISTS " + s.Ident(name)) == 0
-end
-pub func TableExists(s: Session, name: str): bool:
-    mut sql := ""
-    if s.dialect == SQLITE:
-        sql = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = " + s.Literal(Value.Text(name))
-    else s.dialect == MYSQL:
-        sql = "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = " + s.Literal(Value.Text(name))
-    else:
-        sql = "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_name = " + s.Literal(Value.Text(name))
+pub func InsertSQL(s: Session, table: str, m: dyn Model): str:
+    mut names := Vector {} as Vector<str>
+    mut vals := Vector {} as Vector<str>
+    repeat m.ColumnCount() in i:
+        c := m.Column(i)
+        if c.auto:
+            continue
+        end
+        names.push(s.Ident(c.name))
+        vals.push(s.Literal(m.Get(c.name)))
     end
-    rows := s.Query(sql)
-    mut n := 0
-    each row in rows:
-        n = row.GetInt("n") as int
-        row.Free()
-    end
-    rows.free()
-    ret n > 0
+    sql := "INSERT INTO " + s.Ident(table) + " (" + str.Join(names, ", ") + ") VALUES (" + str.Join(vals, ", ") + ")"
+    names.free()
+    vals.free()
+    ret sql
 end
 
-pub func MigrateAll(s: Session, m: Migrations): int:
-    mut mig := db.NewMigrator()
-    defer db.FreeMigrator(mig)
-    repeat m.items.len() in i:
-        it := m.items.get(i)
-        db.AddMigration(mig, it.version, it.name, it.up, it.down)
+pub func UpdateSQL(s: Session, table: str, m: dyn Model): str:
+    mut sets := Vector {} as Vector<str>
+    key := keyName(m)
+    keyval := s.Literal(m.Get(key))
+    repeat m.ColumnCount() in i:
+        c := m.Column(i)
+        if c.pk:
+            continue
+        end
+        sets.push(s.Ident(c.name) + " = " + s.Literal(m.Get(c.name)))
     end
-    ret db.MigrateUp(mig, s.conn)
+    sql := "UPDATE " + s.Ident(table) + " SET " + str.Join(sets, ", ") + " WHERE " + s.Ident(key) + " = " + keyval
+    sets.free()
+    ret sql
 end
 
-pub func SchemaVersion(s: Session): int:
-    mut mig := db.NewMigrator()
-    defer db.FreeMigrator(mig)
-    ret db.SchemaVersion(mig, s.conn)
+pub func SelectSQL(s: Session, table: str, m: dyn Model, where: str, order: str, limit: i64, offset: i64): str:
+    mut sb := str.NewBuilder()
+    defer str.BufFree(sb)
+    str.BufAppend(sb, "SELECT ")
+    mut k := 0
+    until k < m.ColumnCount():
+        if k > 0:
+            str.BufAppend(sb, ", ")
+        end
+        str.BufAppend(sb, s.Ident(m.Column(k).name))
+        k = k + 1
+    end
+    str.BufAppend(sb, " FROM ")
+    str.BufAppend(sb, s.Ident(table))
+    if where != "":
+        str.BufAppend(sb, " WHERE ")
+        str.BufAppend(sb, where)
+    end
+    if order != "":
+        str.BufAppend(sb, " ORDER BY ")
+        str.BufAppend(sb, order)
+    end
+    if limit >= 0:
+        str.BufAppend(sb, " LIMIT ")
+        str.BufAppendInt(sb, limit)
+    end
+    if offset > 0:
+        str.BufAppend(sb, " OFFSET ")
+        str.BufAppendInt(sb, offset)
+    end
+    ret str.BufStr(sb)
+end
+
+pub func CountSQL(s: Session, table: str, where: str): str:
+    mut sql := "SELECT COUNT(*) AS n FROM " + s.Ident(table)
+    if where != "":
+        sql = sql + " WHERE " + where
+    end
+    ret sql
+end
+
+// ---- condition builders ----
+
+pub func Eq(s: Session, col: str, v: Value): str:
+    ret s.Ident(col) + " = " + s.Literal(v)
+end
+
+pub func Ne(s: Session, col: str, v: Value): str:
+    ret s.Ident(col) + " <> " + s.Literal(v)
+end
+
+pub func Lt(s: Session, col: str, v: Value): str:
+    ret s.Ident(col) + " < " + s.Literal(v)
+end
+
+pub func Le(s: Session, col: str, v: Value): str:
+    ret s.Ident(col) + " <= " + s.Literal(v)
+end
+
+pub func Gt(s: Session, col: str, v: Value): str:
+    ret s.Ident(col) + " > " + s.Literal(v)
+end
+
+pub func Ge(s: Session, col: str, v: Value): str:
+    ret s.Ident(col) + " >= " + s.Literal(v)
+end
+
+pub func Like(s: Session, col: str, pattern: str): str:
+    ret s.Ident(col) + " LIKE " + s.Literal(Value.Text(pattern))
+end
+
+pub func InList(s: Session, col: str, vals: Vector<Value>): str:
+    mut parts := Vector {} as Vector<str>
+    repeat vals.len() in i:
+        parts.push(s.Literal(vals.get(i)))
+    end
+    out := s.Ident(col) + " IN (" + str.Join(parts, ", ") + ")"
+    parts.free()
+    ret out
+end
+
+pub func Between(s: Session, col: str, lo: Value, hi: Value): str:
+    ret s.Ident(col) + " BETWEEN " + s.Literal(lo) + " AND " + s.Literal(hi)
+end
+
+pub func IsNull(s: Session, col: str): str:
+    ret s.Ident(col) + " IS NULL"
+end
+
+pub func IsNotNull(s: Session, col: str): str:
+    ret s.Ident(col) + " IS NOT NULL"
+end
+
+pub func And(parts: Vector<str>): str:
+    ret "(" + str.Join(parts, " AND ") + ")"
+end
+
+pub func Or(parts: Vector<str>): str:
+    ret "(" + str.Join(parts, " OR ") + ")"
+end
+
+pub func Not(cond: str): str:
+    ret "NOT (" + cond + ")"
+end
+
+pub func Raw(sql: str): str:
+    ret sql
+end
+
+pub func Asc(s: Session, col: str): str:
+    ret s.Ident(col) + " ASC"
+end
+
+pub func Desc(s: Session, col: str): str:
+    ret s.Ident(col) + " DESC"
+end
+
+pub func InTx(s: Session, stmts: Vector<str>): bool:
+    t := s.conn.Begin()
+    if not t.Ok():
+        ret false
+    end
+    repeat stmts.len() in i:
+        if t.Exec(stmts.get(i)) != 0:
+            _ := t.Rollback()
+            ret false
+        end
+    end
+    ret t.Commit() == 0
 end
