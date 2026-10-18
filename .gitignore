@@ -1,4 +1,15 @@
+# Build artifacts
 orm_demo
-*.db
+main
 *.o
 *.out
+*.ll
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor / OS noise
+.DS_Store
+*.swp
