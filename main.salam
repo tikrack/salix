@@ -1,101 +1,266 @@
+// main.salam - an end-to-end tour of the orm library.
+//
+// The database engine and credentials come from orm.ini; nothing here is
+// hard-coded. Run it with:  salam run main.salam
+
+package main
+
 include orm "src/orm.salam"
+
+// ---- models ----------------------------------------------------------
 
 struct User:
     pub id: i64 = 0
     pub name: str = ""
     pub email: str = ""
-    pub age: int = 0
+    pub age: i64 = 0
 
-    pub func TableName(): str:
+    pub func Table(): str:
         ret "users"
     end
-    pub func PrimaryKey(): str:
-        ret "id"
-    end
-    pub func AutoPrimaryKey(): bool:
-        ret true
-    end
+
     pub func ColumnCount(): int:
         ret 4
     end
-    pub func ColumnName(i: int): str:
-        if i == 0: ret "id" end
-        if i == 1: ret "name" end
-        if i == 2: ret "email" end
-        ret "age"
+
+    pub func Column(i: int): orm.Column:
+        if i == 0: ret orm.AutoKeyCol("id", "i64") end
+        if i == 1: ret orm.NotNull(orm.NewColumn("name", "text")) end
+        if i == 2: ret orm.Unique(orm.NewColumn("email", "text")) end
+        ret orm.NewColumn("age", "i64")
     end
-    pub func ColumnValue(i: int): orm.Value:
-        if i == 0: ret orm.Value.Int(this.id) end
-        if i == 1: ret orm.Value.Text(this.name) end
-        if i == 2: ret orm.Value.Text(this.email) end
-        ret orm.Value.Int(this.age as i64)
+
+    pub func Get(col: str): orm.Value:
+        if col == "id": ret orm.Value.Int(this.id) end
+        if col == "name": ret orm.Value.Text(this.name) end
+        if col == "email": ret orm.Value.Text(this.email) end
+        if col == "age": ret orm.Value.Int(this.age) end
+        ret orm.Value {}
     end
-    pub func Assign(col: str, v: orm.Value): bool:
+
+    pub func Set(col: str, v: orm.Value): bool:
         if col == "id":
             this.id = v.AsInt()
-        else col == "name":
-            this.name = v.AsText()
-        else col == "email":
-            this.email = v.AsText()
-        else col == "age":
-            this.age = v.AsInt() as int
-        else:
-            ret false
+            ret true
         end
-        ret true
+        if col == "name":
+            this.name = v.AsText()
+            ret true
+        end
+        if col == "email":
+            this.email = v.AsText()
+            ret true
+        end
+        if col == "age":
+            this.age = v.AsInt()
+            ret true
+        end
+        ret false
     end
 end
+
+struct Post:
+    pub id: i64 = 0
+    pub user_id: i64 = 0
+    pub title: str = ""
+    pub views: i64 = 0
+
+    pub func Table(): str:
+        ret "posts"
+    end
+
+    pub func ColumnCount(): int:
+        ret 4
+    end
+
+    pub func Column(i: int): orm.Column:
+        if i == 0: ret orm.AutoKeyCol("id", "i64") end
+        if i == 1: ret orm.NotNull(orm.NewColumn("user_id", "i64")) end
+        if i == 2: ret orm.NotNull(orm.NewColumn("title", "text")) end
+        ret orm.WithDefault(orm.NewColumn("views", "i64"), "0")
+    end
+
+    pub func Get(col: str): orm.Value:
+        if col == "id": ret orm.Value.Int(this.id) end
+        if col == "user_id": ret orm.Value.Int(this.user_id) end
+        if col == "title": ret orm.Value.Text(this.title) end
+        if col == "views": ret orm.Value.Int(this.views) end
+        ret orm.Value {}
+    end
+
+    pub func Set(col: str, v: orm.Value): bool:
+        if col == "id":
+            this.id = v.AsInt()
+            ret true
+        end
+        if col == "user_id":
+            this.user_id = v.AsInt()
+            ret true
+        end
+        if col == "title":
+            this.title = v.AsText()
+            ret true
+        end
+        if col == "views":
+            this.views = v.AsInt()
+            ret true
+        end
+        ret false
+    end
+end
+
+// ---- program ---------------------------------------------------------
 
 func main:
     cfg := orm.LoadConfig("orm.ini")
     println "engine:", cfg.engine, "path:", cfg.path
 
-    s := orm.OpenConfig(cfg)
+    s := orm.Open(cfg)
     defer s.Close()
     if not s.Ok():
         printerrln "cannot open database:", s.Error()
         ret 1
     end
+    println "connected:", s.Kind(), "ping:", s.Ping()
 
-    mut t := orm.NewTable("users")
-    t = orm.AddColumn(t, orm.AutoIncrement(orm.NewColumn("id", "i64")))
-    t = orm.AddColumn(t, orm.NotNullCol(orm.NewColumn("name", "text")))
-    t = orm.AddColumn(t, orm.UniqueCol(orm.NewColumn("email", "text")))
-    t = orm.AddColumn(t, orm.DefaultCol(orm.NewColumn("age", "int"), "0"))
-    _ := orm.DropTableIfExists(s, "users")
-    if not orm.CreateTable(s, t):
-        printerrln "create table failed:", s.Error()
-        ret 1
+    Migrate(s)
+    CrudDemo(s)
+    QueryDemo(s)
+    RelationDemo(s)
+    TransactionDemo(s)
+
+    println "done."
+    ret 0
+end
+
+func Migrate(s: orm.Session):
+    mut m := orm.NewMigrator()
+    defer m.items.free()
+    orm.AddMigration(
+        m, 1, "create_users",
+        "CREATE TABLE users (id BIGINT PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE, age BIGINT)",
+        "DROP TABLE users"
+    )
+    orm.AddMigration(
+        m, 2, "create_posts",
+        "CREATE TABLE posts (id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL, title TEXT NOT NULL, views BIGINT)",
+        "DROP TABLE posts"
+    )
+    applied := orm.Migrate(s, m)
+    println "migrations applied:", applied, "schema version:", orm.SchemaVersion(s)
+end
+
+func CrudDemo(s: orm.Session):
+    println "-- crud --"
+    users := orm.NewRepo(User {}, s)
+    _ := users.DropTableIfExists()
+    if not users.CreateTable():
+        printerrln "create failed:", s.Error()
+        ret
     end
-    orm.FreeTable(t)
-    println "table exists:", orm.TableExists(s, "users")
 
-    repo := orm.NewRepo(s, User {})
-    _ := repo.Save(User { name = "Ali", email = "ali@example.com", age = 30 })
-    _ := repo.Save(User { name = "Sara", email = "sara@example.com", age = 25 })
+    mut ids := Vector {} as Vector<i64>
+    ids.push(users.Save(User { name = "Ali", email = "ali@example.com", age = 30 }))
+    ids.push(users.Save(User { name = "Sara", email = "sara@example.com", age = 25 }))
+    ids.push(users.Save(User { name = "Reza", email = "reza@example.com", age = 41 }))
+    println "inserted ids:", ids.len(), "total:", users.Total("")
 
-    mut users := repo.List("", orm.Desc("age"), 10)
-    each u in users:
-        println u.id, u.name, u.email, u.age
-    end
-    users.free()
-
-    mut one := User {}
-    if repo.Fetch(1, one):
-        println "fetched:", one.name
+    mut u := User {}
+    if users.Find(ids.get(0), u):
+        println "found:", u.id, u.name, u.age
     end
 
-    mut conds := Vector {} as Vector<str>
-    conds.push(orm.Eq(s, "age", orm.Value.Int(30)))
-    println "count age=30:", repo.Total(orm.And(conds))
-    conds.free()
+    _ := users.Update(User { id = ids.get(0), name = "Ali Reza", email = "ali@example.com", age = 31 })
+    mut updated := User {}
+    if users.Find(ids.get(0), updated):
+        println "updated:", updated.name, updated.age
+    end
 
-    _ := repo.Modify(User { id = 1, name = "Ali Reza", email = "ali@example.com", age = 31 })
-    _ := repo.Remove(2)
-    println "total:", repo.Total("")
+    println "exists(1):", users.Exists(ids.get(0))
+    _ := users.Delete(ids.get(2))
+    println "after delete total:", users.Total("")
+    ids.free()
+end
 
-    mut m := orm.Migrations.New()
-    m = m.Add(1, "posts", "CREATE TABLE posts (id INTEGER)", "DROP TABLE posts")
-    println "migrations:", m.Count(), "applied:", orm.MigrateAll(s, m), "schema:", orm.SchemaVersion(s)
-    m.Free()
+func QueryDemo(s: orm.Session):
+    println "-- queries --"
+    users := orm.NewRepo(User {}, s)
+
+    ordered := users.List("", orm.Desc(s, "age"), 10)
+    each u in ordered:
+        println "user:", u.name, u.age
+    end
+    ordered.free()
+
+    adults := users.List(orm.Ge(s, "age", orm.Value.Int(30)), orm.Asc(s, "name"), 10)
+    println "adults:", adults.len()
+    adults.free()
+
+    searched := users.List(orm.Like(s, "name", "%a%"), "", 10)
+    println "matched 'a':", searched.len()
+    searched.free()
+
+    page := users.Page("", orm.Asc(s, "id"), 1, 1)
+    if page.len() > 0:
+        println "page row:", page.get(0).name
+    end
+    page.free()
+
+    rows := s.Query("SELECT name, age FROM users ORDER BY age DESC")
+    each row in rows:
+        println "raw:", row.Text("name"), row.Int("age")
+        row.Free()
+    end
+    rows.free()
+end
+
+func RelationDemo(s: orm.Session):
+    println "-- relations --"
+    posts := orm.NewRepo(Post {}, s)
+    _ := posts.DropTableIfExists()
+    if not posts.CreateTable():
+        printerrln "create posts failed:", s.Error()
+        ret
+    end
+
+    users := orm.NewRepo(User {}, s)
+    all := users.List("", orm.Asc(s, "id"), 1)
+    mut author := 0 as i64
+    if all.len() > 0:
+        author = all.get(0).id
+    end
+    all.free()
+
+    _ := posts.Save(Post { user_id = author, title = "Hello ORM", views = 12 })
+    _ := posts.Save(Post { user_id = author, title = "Salam world", views = 3 })
+
+    mine := posts.List(orm.Eq(s, "user_id", orm.Value.Int(author)), orm.Desc(s, "views"), 10)
+    println "posts by user", author, ":", mine.len()
+    each p in mine:
+        println "post:", p.title, p.views
+    end
+    mine.free()
+
+    n := posts.Scalar("SELECT SUM(views) FROM posts WHERE user_id = " + s.Literal(orm.Value.Int(author)))
+    println "total views:", n
+end
+
+func TransactionDemo(s: orm.Session):
+    println "-- transactions --"
+    users := orm.NewRepo(User {}, s)
+    before := users.Total("")
+
+    mut stmts := Vector {} as Vector<str>
+    stmts.push(orm.InsertSQL(s, "users", User { name = "Tx1", email = "tx1@example.com", age = 20 }))
+    stmts.push(orm.InsertSQL(s, "users", User { name = "Tx2", email = "tx2@example.com", age = 21 }))
+    ok := orm.InTx(s, stmts)
+    println "committed:", ok, "delta:", users.Total("") - before
+    stmts.free()
+
+    mut bad := Vector {} as Vector<str>
+    bad.push(orm.InsertSQL(s, "users", User { name = "Tx3", email = "tx3@example.com", age = 22 }))
+    bad.push("INSERT INTO users (name) VALUES (NULL)")
+    rolled := orm.InTx(s, bad)
+    println "rolled back:", not rolled, "total unchanged:", users.Total("") == before + 2
+    bad.free()
 end
