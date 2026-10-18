@@ -1,0 +1,194 @@
+// tests/orm_test.salam - a self-contained test suite for the orm library.
+//
+// It runs entirely on SQLite in memory, so it needs no server. Run it with:
+//     salam run tests/orm_test.salam
+
+package main
+
+import testing
+
+include orm "../src/orm.salam"
+
+struct Account:
+    pub id: i64 = 0
+    pub owner: str = ""
+    pub balance: i64 = 0
+    pub active: bool = false
+
+    pub func Table(): str:
+        ret "accounts"
+    end
+
+    pub func ColumnCount(): int:
+        ret 4
+    end
+
+    pub func Column(i: int): orm.Column:
+        if i == 0: ret orm.AutoKeyCol("id", "i64") end
+        if i == 1: ret orm.NotNull(orm.NewColumn("owner", "text")) end
+        if i == 2: ret orm.WithDefault(orm.NewColumn("balance", "i64"), "0") end
+        ret orm.NewColumn("active", "bool")
+    end
+
+    pub func Get(col: str): orm.Value:
+        if col == "id": ret orm.Value.Int(this.id) end
+        if col == "owner": ret orm.Value.Text(this.owner) end
+        if col == "balance": ret orm.Value.Int(this.balance) end
+        if col == "active": ret orm.Value.Bool(this.active) end
+        ret orm.Value {}
+    end
+
+    pub func Set(col: str, v: orm.Value): bool:
+        if col == "id":
+            this.id = v.AsInt()
+            ret true
+        end
+        if col == "owner":
+            this.owner = v.AsText()
+            ret true
+        end
+        if col == "balance":
+            this.balance = v.AsInt()
+            ret true
+        end
+        if col == "active":
+            this.active = v.AsBool()
+            ret true
+        end
+        ret false
+    end
+end
+
+func main:
+    testing.Reset()
+
+    s := orm.OpenFile(":memory:")
+    defer s.Close()
+    testing.AssertTrue(s.Ok())
+
+    TestValue()
+    TestSchema(s)
+    TestCrud(s)
+    TestQueries(s)
+    TestAggregates(s)
+    TestTransactions(s)
+
+    ret testing.Summary()
+end
+
+func TestValue():
+    testing.AssertEqInt64(orm.Value.Int(42).AsInt(), 42)
+    testing.AssertEqStr(orm.Value.Int(7).AsText(), "7")
+    testing.AssertEqFloat(orm.Value.Float(1.5).AsFloat(), 1.5, 0.0001)
+    testing.AssertTrue(orm.Value.Bool(true).AsBool())
+    testing.AssertTrue(orm.Value.Text("true").AsBool())
+    testing.AssertTrue(orm.Value.Null().IsNull())
+    testing.AssertEqStr(orm.Value.Text("hi").AsText(), "hi")
+end
+
+func TestSchema(s: orm.Session):
+    testing.AssertEqStr(orm.NormalizeEngine("pgsql"), "postgres")
+    testing.AssertEqStr(orm.NormalizeEngine("mariadb"), "mysql")
+    testing.AssertEqStr(orm.MapType("mysql", "i64"), "BIGINT")
+    testing.AssertEqStr(orm.MapType("postgres", "bool"), "BOOLEAN")
+    testing.AssertEqStr(orm.MapType("sqlite", "float"), "REAL")
+
+    accounts := orm.NewRepo(Account {}, s)
+    _ := accounts.DropTableIfExists()
+    testing.AssertTrue(accounts.CreateTable())
+    testing.AssertTrue(accounts.TableExists())
+    testing.AssertEqStr(accounts.PrimaryKey(), "id")
+end
+
+func TestCrud(s: orm.Session):
+    accounts := orm.NewRepo(Account {}, s)
+
+    id := accounts.Save(Account { owner = "Ali", balance = 100, active = true })
+    testing.AssertTrue(id > 0)
+    testing.AssertEqInt64(accounts.Total(""), 1)
+    testing.AssertTrue(accounts.Exists(id))
+
+    mut got := Account {}
+    testing.AssertTrue(accounts.Find(id, got))
+    testing.AssertEqStr(got.owner, "Ali")
+    testing.AssertEqInt64(got.balance, 100)
+    testing.AssertTrue(got.active)
+
+    testing.AssertTrue(accounts.Update(Account { id = id, owner = "Ali", balance = 250, active = false }))
+    mut updated := Account {}
+    testing.AssertTrue(accounts.Find(id, updated))
+    testing.AssertEqInt64(updated.balance, 250)
+    testing.AssertFalse(updated.active)
+
+    testing.AssertTrue(accounts.Delete(id))
+    testing.AssertEqInt64(accounts.Total(""), 0)
+end
+
+func TestQueries(s: orm.Session):
+    accounts := orm.NewRepo(Account {}, s)
+    _ := accounts.DropTableIfExists()
+    _ := accounts.CreateTable()
+
+    mut batch := Vector {} as Vector<Account>
+    batch.push(Account { owner = "Ali", balance = 100 })
+    batch.push(Account { owner = "Sara", balance = 300 })
+    batch.push(Account { owner = "Reza", balance = 200 })
+    testing.AssertEqInt(accounts.SaveMany(batch), 3)
+    batch.free()
+    testing.AssertEqInt64(accounts.Total(""), 3)
+
+    rich := accounts.List(orm.Ge(s, "balance", orm.Value.Int(200)), orm.Desc(s, "balance"), 10)
+    testing.AssertEqInt(rich.len(), 2)
+    testing.AssertEqStr(rich.get(0).owner, "Sara")
+    rich.free()
+
+    between := accounts.List(orm.Between(s, "balance", orm.Value.Int(150), orm.Value.Int(250)), "", 10)
+    testing.AssertEqInt(between.len(), 1)
+    between.free()
+
+    like := accounts.List(orm.Like(s, "owner", "%a%"), orm.Asc(s, "owner"), 10)
+    // SQLite's LIKE is case-insensitive for ASCII, so "Ali" matches too.
+    testing.AssertEqInt(like.len(), 3)
+    like.free()
+
+    page := accounts.Page("", orm.Asc(s, "balance"), 1, 1)
+    testing.AssertEqStr(page.get(0).owner, "Reza")
+    page.free()
+
+    mut first := Account {}
+    testing.AssertTrue(accounts.First(orm.Gt(s, "balance", orm.Value.Int(150)), orm.Desc(s, "balance"), first))
+    testing.AssertEqStr(first.owner, "Sara")
+end
+
+func TestAggregates(s: orm.Session):
+    accounts := orm.NewRepo(Account {}, s)
+    testing.AssertEqInt64(accounts.Sum("balance", ""), 600)
+    testing.AssertEqInt64(accounts.Max("balance", ""), 300)
+    testing.AssertEqInt64(accounts.Min("balance", ""), 100)
+    testing.AssertEqInt64(accounts.Scalar("SELECT COUNT(*) FROM accounts WHERE balance >= 200"), 2)
+
+    testing.AssertTrue(accounts.UpdateWhere("balance = 0", orm.Eq(s, "owner", orm.Value.Text("Ali"))))
+    testing.AssertEqInt64(accounts.Sum("balance", ""), 500)
+    testing.AssertTrue(accounts.DeleteWhere(orm.Lt(s, "balance", orm.Value.Int(250))))
+    testing.AssertEqInt64(accounts.Total(""), 1)
+end
+
+func TestTransactions(s: orm.Session):
+    accounts := orm.NewRepo(Account {}, s)
+    _ := accounts.DropTableIfExists()
+    _ := accounts.CreateTable()
+
+    mut good := Vector {} as Vector<str>
+    good.push(orm.InsertSQL(s, "accounts", Account { owner = "Tx1", balance = 10 }))
+    good.push(orm.InsertSQL(s, "accounts", Account { owner = "Tx2", balance = 20 }))
+    testing.AssertTrue(orm.InTx(s, good))
+    testing.AssertEqInt64(accounts.Total(""), 2)
+    good.free()
+
+    mut bad := Vector {} as Vector<str>
+    bad.push(orm.InsertSQL(s, "accounts", Account { owner = "Tx3", balance = 30 }))
+    bad.push("INSERT INTO accounts (owner) VALUES (NULL)")
+    testing.AssertFalse(orm.InTx(s, bad))
+    testing.AssertEqInt64(accounts.Total(""), 2)
+    bad.free()
+end
