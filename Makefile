@@ -1,14 +1,14 @@
 # Convenience targets around the Salam toolchain.
 #
-#   make run     build and run the demo (engine from orm.ini)
-#   make build   compile a native executable named orm_demo
+#   make run     build and run the demo (engine from salix.ini)
+#   make build   compile a native executable named salix_demo
 #   make format  format every Salam source in place
 #   make check   type-check the program without codegen
 #   make clean   remove build artifacts and local databases
 
 ENTRY   := main.salam
-BIN     := orm_demo
-SOURCES := $(ENTRY) src/orm.salam
+BIN     := salix_demo
+SOURCES := $(ENTRY) src/salix.salam
 
 .PHONY: run build format check clean
 

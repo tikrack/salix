@@ -1,11 +1,11 @@
-// main.salam - an end-to-end tour of the orm library.
+// main.salam - an end-to-end tour of the salix library.
 //
-// The database engine and credentials come from orm.ini; nothing here is
+// The database engine and credentials come from salix.ini; nothing here is
 // hard-coded. Run it with:  salam run main.salam
 
 package main
 
-include orm "src/orm.salam"
+include salix "src/salix.salam"
 
 // ---- models ----------------------------------------------------------
 
@@ -23,22 +23,22 @@ struct User:
         ret 4
     end
 
-    pub func Column(i: int): orm.Column:
-        if i == 0: ret orm.AutoKeyCol("id", "i64") end
-        if i == 1: ret orm.NotNull(orm.NewColumn("name", "text")) end
-        if i == 2: ret orm.Unique(orm.NewColumn("email", "text")) end
-        ret orm.NewColumn("age", "i64")
+    pub func Column(i: int): salix.Column:
+        if i == 0: ret salix.AutoKeyCol("id", "i64") end
+        if i == 1: ret salix.NotNull(salix.NewColumn("name", "text")) end
+        if i == 2: ret salix.Unique(salix.NewColumn("email", "text")) end
+        ret salix.NewColumn("age", "i64")
     end
 
-    pub func Get(col: str): orm.Value:
-        if col == "id": ret orm.Value.Int(this.id) end
-        if col == "name": ret orm.Value.Text(this.name) end
-        if col == "email": ret orm.Value.Text(this.email) end
-        if col == "age": ret orm.Value.Int(this.age) end
-        ret orm.Value {}
+    pub func Get(col: str): salix.Value:
+        if col == "id": ret salix.Value.Int(this.id) end
+        if col == "name": ret salix.Value.Text(this.name) end
+        if col == "email": ret salix.Value.Text(this.email) end
+        if col == "age": ret salix.Value.Int(this.age) end
+        ret salix.Value {}
     end
 
-    pub func Set(col: str, v: orm.Value): bool:
+    pub func Set(col: str, v: salix.Value): bool:
         if col == "id":
             this.id = v.AsInt()
             ret true
@@ -73,22 +73,22 @@ struct Post:
         ret 4
     end
 
-    pub func Column(i: int): orm.Column:
-        if i == 0: ret orm.AutoKeyCol("id", "i64") end
-        if i == 1: ret orm.NotNull(orm.NewColumn("user_id", "i64")) end
-        if i == 2: ret orm.NotNull(orm.NewColumn("title", "text")) end
-        ret orm.WithDefault(orm.NewColumn("views", "i64"), "0")
+    pub func Column(i: int): salix.Column:
+        if i == 0: ret salix.AutoKeyCol("id", "i64") end
+        if i == 1: ret salix.NotNull(salix.NewColumn("user_id", "i64")) end
+        if i == 2: ret salix.NotNull(salix.NewColumn("title", "text")) end
+        ret salix.WithDefault(salix.NewColumn("views", "i64"), "0")
     end
 
-    pub func Get(col: str): orm.Value:
-        if col == "id": ret orm.Value.Int(this.id) end
-        if col == "user_id": ret orm.Value.Int(this.user_id) end
-        if col == "title": ret orm.Value.Text(this.title) end
-        if col == "views": ret orm.Value.Int(this.views) end
-        ret orm.Value {}
+    pub func Get(col: str): salix.Value:
+        if col == "id": ret salix.Value.Int(this.id) end
+        if col == "user_id": ret salix.Value.Int(this.user_id) end
+        if col == "title": ret salix.Value.Text(this.title) end
+        if col == "views": ret salix.Value.Int(this.views) end
+        ret salix.Value {}
     end
 
-    pub func Set(col: str, v: orm.Value): bool:
+    pub func Set(col: str, v: salix.Value): bool:
         if col == "id":
             this.id = v.AsInt()
             ret true
@@ -112,10 +112,10 @@ end
 // ---- program ---------------------------------------------------------
 
 func main:
-    cfg := orm.LoadConfig("orm.ini")
+    cfg := salix.LoadConfig("salix.ini")
     println "engine:", cfg.engine, "path:", cfg.path
 
-    s := orm.Open(cfg)
+    s := salix.Open(cfg)
     defer s.Close()
     if not s.Ok():
         printerrln "cannot open database:", s.Error()
@@ -133,26 +133,26 @@ func main:
     ret 0
 end
 
-func Migrate(s: orm.Session):
-    mut m := orm.NewMigrator()
+func Migrate(s: salix.Session):
+    mut m := salix.NewMigrator()
     defer m.items.free()
-    orm.AddMigration(
+    salix.AddMigration(
         m, 1, "create_users",
         "CREATE TABLE users (id BIGINT PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE, age BIGINT)",
         "DROP TABLE users"
     )
-    orm.AddMigration(
+    salix.AddMigration(
         m, 2, "create_posts",
         "CREATE TABLE posts (id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL, title TEXT NOT NULL, views BIGINT)",
         "DROP TABLE posts"
     )
-    applied := orm.Migrate(s, m)
-    println "migrations applied:", applied, "schema version:", orm.SchemaVersion(s)
+    applied := salix.Migrate(s, m)
+    println "migrations applied:", applied, "schema version:", salix.SchemaVersion(s)
 end
 
-func CrudDemo(s: orm.Session):
+func CrudDemo(s: salix.Session):
     println "-- crud --"
-    users := orm.NewRepo(User {}, s)
+    users := salix.NewRepo(User {}, s)
     _ := users.DropTableIfExists()
     if not users.CreateTable():
         printerrln "create failed:", s.Error()
@@ -182,25 +182,25 @@ func CrudDemo(s: orm.Session):
     ids.free()
 end
 
-func QueryDemo(s: orm.Session):
+func QueryDemo(s: salix.Session):
     println "-- queries --"
-    users := orm.NewRepo(User {}, s)
+    users := salix.NewRepo(User {}, s)
 
-    ordered := users.List("", orm.Desc(s, "age"), 10)
+    ordered := users.List("", salix.Desc(s, "age"), 10)
     each u in ordered:
         println "user:", u.name, u.age
     end
     ordered.free()
 
-    adults := users.List(orm.Ge(s, "age", orm.Value.Int(30)), orm.Asc(s, "name"), 10)
+    adults := users.List(salix.Ge(s, "age", salix.Value.Int(30)), salix.Asc(s, "name"), 10)
     println "adults:", adults.len()
     adults.free()
 
-    searched := users.List(orm.Like(s, "name", "%a%"), "", 10)
+    searched := users.List(salix.Like(s, "name", "%a%"), "", 10)
     println "matched 'a':", searched.len()
     searched.free()
 
-    page := users.Page("", orm.Asc(s, "id"), 1, 1)
+    page := users.Page("", salix.Asc(s, "id"), 1, 1)
     if page.len() > 0:
         println "page row:", page.get(0).name
     end
@@ -214,53 +214,53 @@ func QueryDemo(s: orm.Session):
     rows.free()
 end
 
-func RelationDemo(s: orm.Session):
+func RelationDemo(s: salix.Session):
     println "-- relations --"
-    posts := orm.NewRepo(Post {}, s)
+    posts := salix.NewRepo(Post {}, s)
     _ := posts.DropTableIfExists()
     if not posts.CreateTable():
         printerrln "create posts failed:", s.Error()
         ret
     end
 
-    users := orm.NewRepo(User {}, s)
-    all := users.List("", orm.Asc(s, "id"), 1)
+    users := salix.NewRepo(User {}, s)
+    all := users.List("", salix.Asc(s, "id"), 1)
     mut author := 0 as i64
     if all.len() > 0:
         author = all.get(0).id
     end
     all.free()
 
-    _ := posts.Save(Post { user_id = author, title = "Hello ORM", views = 12 })
+    _ := posts.Save(Post { user_id = author, title = "Hello Salix", views = 12 })
     _ := posts.Save(Post { user_id = author, title = "Salam world", views = 3 })
 
-    mine := posts.List(orm.Eq(s, "user_id", orm.Value.Int(author)), orm.Desc(s, "views"), 10)
+    mine := posts.List(salix.Eq(s, "user_id", salix.Value.Int(author)), salix.Desc(s, "views"), 10)
     println "posts by user", author, ":", mine.len()
     each p in mine:
         println "post:", p.title, p.views
     end
     mine.free()
 
-    n := posts.Scalar("SELECT SUM(views) FROM posts WHERE user_id = " + s.Literal(orm.Value.Int(author)))
+    n := posts.Scalar("SELECT SUM(views) FROM posts WHERE user_id = " + s.Literal(salix.Value.Int(author)))
     println "total views:", n
 end
 
-func TransactionDemo(s: orm.Session):
+func TransactionDemo(s: salix.Session):
     println "-- transactions --"
-    users := orm.NewRepo(User {}, s)
+    users := salix.NewRepo(User {}, s)
     before := users.Total("")
 
     mut stmts := Vector {} as Vector<str>
-    stmts.push(orm.InsertSQL(s, "users", User { name = "Tx1", email = "tx1@example.com", age = 20 }))
-    stmts.push(orm.InsertSQL(s, "users", User { name = "Tx2", email = "tx2@example.com", age = 21 }))
-    ok := orm.InTx(s, stmts)
+    stmts.push(salix.InsertSQL(s, "users", User { name = "Tx1", email = "tx1@example.com", age = 20 }))
+    stmts.push(salix.InsertSQL(s, "users", User { name = "Tx2", email = "tx2@example.com", age = 21 }))
+    ok := salix.InTx(s, stmts)
     println "committed:", ok, "delta:", users.Total("") - before
     stmts.free()
 
     mut bad := Vector {} as Vector<str>
-    bad.push(orm.InsertSQL(s, "users", User { name = "Tx3", email = "tx3@example.com", age = 22 }))
+    bad.push(salix.InsertSQL(s, "users", User { name = "Tx3", email = "tx3@example.com", age = 22 }))
     bad.push("INSERT INTO users (name) VALUES (NULL)")
-    rolled := orm.InTx(s, bad)
+    rolled := salix.InTx(s, bad)
     println "rolled back:", not rolled, "total unchanged:", users.Total("") == before + 2
     bad.free()
 end

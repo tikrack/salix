@@ -1,4 +1,4 @@
-# orm-salam
+# salix
 
 A small, complete ORM written in the [Salam](https://salamlang.ir) programming
 language. It runs on **SQLite**, **MySQL/MariaDB** and **PostgreSQL** through
@@ -6,13 +6,13 @@ the standard `db.*` drivers, and the engine and its credentials come from an
 INI configuration file.
 
 ```
-orm-salam/
-├── main.salam        end-to-end demo: migrations, CRUD, queries, relations, transactions
-├── src/orm.salam     the ORM library (package `orm`)
-├── tests/orm_test.salam  in-memory SQLite test suite (50 assertions)
-├── orm.ini           configuration: engine + credentials
-├── Makefile          run / build / format / check / clean
-├── LICENSE           MIT
+salix/
+├── main.salam              end-to-end demo: migrations, CRUD, queries, relations, transactions
+├── src/salix.salam         the ORM library (package `salix`)
+├── tests/salix_test.salam  in-memory SQLite test suite (50 assertions)
+├── salix.ini               configuration: engine + credentials
+├── Makefile                run / build / format / check / clean
+├── LICENSE                 MIT
 └── README.md
 ```
 
@@ -22,8 +22,8 @@ orm-salam/
 salam run main.salam
 ```
 
-That reads `orm.ini`, opens the configured database, and runs the whole tour
-demonstrated against SQLite by default. To switch engine, edit `orm.ini` only —
+That reads `salix.ini`, opens the configured database, and runs the whole tour
+demonstrated against SQLite by default. To switch engine, edit `salix.ini` only —
 no code changes:
 
 ```ini
@@ -33,7 +33,7 @@ host = 127.0.0.1
 port = 5432
 user = postgres
 password = secret
-name = orm_demo
+name = salix_demo
 ```
 
 ## Requirements
@@ -45,12 +45,12 @@ name = orm_demo
 
 ## Configuration
 
-All settings live under the `[database]` section of `orm.ini`:
+All settings live under the `[database]` section of `salix.ini`:
 
 | Key        | Used by              | Meaning                                  |
 | ---------- | -------------------- | ---------------------------------------- |
 | `engine`   | all                  | `sqlite`, `mysql` or `postgres`          |
-| `path`     | sqlite               | database file (e.g. `orm_demo.db`)       |
+| `path`     | sqlite               | database file (e.g. `salix_demo.db`)       |
 | `host`     | mysql, postgres      | server host                              |
 | `port`     | mysql, postgres      | server port                              |
 | `user`     | mysql, postgres      | user name                                |
@@ -82,24 +82,24 @@ struct User:
     end
 
     // Column(i) declares column i: its name, type and constraints.
-    pub func Column(i: int): orm.Column:
-        if i == 0: ret orm.AutoKeyCol("id", "i64") end
-        if i == 1: ret orm.NotNull(orm.NewColumn("name", "text")) end
-        if i == 2: ret orm.Unique(orm.NewColumn("email", "text")) end
-        ret orm.NewColumn("age", "i64")
+    pub func Column(i: int): salix.Column:
+        if i == 0: ret salix.AutoKeyCol("id", "i64") end
+        if i == 1: ret salix.NotNull(salix.NewColumn("name", "text")) end
+        if i == 2: ret salix.Unique(salix.NewColumn("email", "text")) end
+        ret salix.NewColumn("age", "i64")
     end
 
-    // Get returns the value of one column as a dynamic orm.Value.
-    pub func Get(col: str): orm.Value:
-        if col == "id": ret orm.Value.Int(this.id) end
-        if col == "name": ret orm.Value.Text(this.name) end
-        if col == "email": ret orm.Value.Text(this.email) end
-        if col == "age": ret orm.Value.Int(this.age) end
-        ret orm.Value {}
+    // Get returns the value of one column as a dynamic salix.Value.
+    pub func Get(col: str): salix.Value:
+        if col == "id": ret salix.Value.Int(this.id) end
+        if col == "name": ret salix.Value.Text(this.name) end
+        if col == "email": ret salix.Value.Text(this.email) end
+        if col == "age": ret salix.Value.Int(this.age) end
+        ret salix.Value {}
     end
 
-    // Set stores one dynamic orm.Value into a column.
-    pub func Set(col: str, v: orm.Value): bool:
+    // Set stores one dynamic salix.Value into a column.
+    pub func Set(col: str, v: salix.Value): bool:
         if col == "id":
             this.id = v.AsInt()
             ret true
@@ -121,7 +121,7 @@ struct User:
 end
 ```
 
-Column types are portable names, mapped per engine by `orm.MapType`:
+Column types are portable names, mapped per engine by `salix.MapType`:
 
 | Logical type  | SQLite            | MySQL       | PostgreSQL       |
 | ------------- | ----------------- | ----------- | ---------------- |
@@ -140,8 +140,8 @@ on SQLite, `BIGINT AUTO_INCREMENT PRIMARY KEY` on MySQL, and
 ## Opening a session
 
 ```salam
-cfg := orm.LoadConfig("orm.ini")
-s := orm.Open(cfg)
+cfg := salix.LoadConfig("salix.ini")
+s := salix.Open(cfg)
 defer s.Close()
 if not s.Ok():
     printerrln "cannot open database:", s.Error()
@@ -157,7 +157,7 @@ adopts an existing `dyn db.Connection`.
 `NewRepo(Model {}, session)` returns a typed `Repo<T>`:
 
 ```salam
-users := orm.NewRepo(User {}, s)
+users := salix.NewRepo(User {}, s)
 _ := users.CreateTable()      // or DropTableIfExists() first
 
 id := users.Save(User { name = "Ali", email = "ali@example.com", age = 30 })
@@ -180,13 +180,13 @@ of rows written.
 
 ```salam
 all    := users.All()
-some   := users.List(orm.Ge(s, "age", orm.Value.Int(30)), orm.Desc(s, "age"), 10)
-page   := users.Page("", orm.Asc(s, "id"), 20, 40)
+some   := users.List(salix.Ge(s, "age", salix.Value.Int(30)), salix.Desc(s, "age"), 10)
+page   := users.Page("", salix.Asc(s, "id"), 20, 40)
 count  := users.Total("")
 exists := users.Exists(id)
 raw    := users.Scalar("SELECT SUM(views) FROM posts")
 mut first := User {}
-found  := users.First(orm.Gt(s, "age", orm.Value.Int(18)), orm.Desc(s, "age"), first)
+found  := users.First(salix.Gt(s, "age", salix.Value.Int(18)), salix.Desc(s, "age"), first)
 ```
 
 Aggregates over a numeric column: `users.Sum("age", where)`,
@@ -212,22 +212,22 @@ rows.free()
 ## Migrations
 
 ```salam
-mut m := orm.NewMigrator()
+mut m := salix.NewMigrator()
 defer m.items.free()
-orm.AddMigration(m, 1, "create_users",
+salix.AddMigration(m, 1, "create_users",
     "CREATE TABLE users (...)",
     "DROP TABLE users")
-applied := orm.Migrate(s, m)
-version := orm.SchemaVersion(s)
+applied := salix.Migrate(s, m)
+version := salix.SchemaVersion(s)
 ```
 
 ## Transactions
 
 ```salam
 mut stmts := Vector {} as Vector<str>
-stmts.push(orm.InsertSQL(s, "users", someUser))
+stmts.push(salix.InsertSQL(s, "users", someUser))
 stmts.push("UPDATE users SET age = 0 WHERE id = 9")
-ok := orm.InTx(s, stmts)     // commits all, or rolls back on the first failure
+ok := salix.InTx(s, stmts)     // commits all, or rolls back on the first failure
 ```
 
 ## API summary

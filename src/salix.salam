@@ -1,8 +1,8 @@
-// orm.salam - a small, engine-agnostic ORM for the Salam programming
+// salix.salam - a small, engine-agnostic ORM for the Salam programming
 // language. It speaks SQLite, MySQL/MariaDB and PostgreSQL through the
 // standard db.* drivers, and it is configured from an INI file.
 
-package orm
+package salix
 
 import db
 import db.sqlite
@@ -289,12 +289,12 @@ pub struct Session:
     end
 
     pub func Exec(sql: str): int:
-        if this.debug: println "[orm] ", sql end
+        if this.debug: println "[salix] ", sql end
         ret this.conn.Exec(sql)
     end
 
     pub func Query(sql: str): Vector<Row>:
-        if this.debug: println "[orm] ", sql end
+        if this.debug: println "[salix] ", sql end
         ret ReadRows(this.conn, sql)
     end
 
@@ -473,7 +473,7 @@ pub struct Repo<T: Model>:
     pub func Find(id: i64, out &: T): bool:
         cond := this.session.Ident(keyName(this.model)) + " = " + this.session.Literal(Value.Int(id))
         sql := SelectSQL(this.session, this.model.Table(), this.model, cond, "", 1, 0)
-        if this.session.debug: println "[orm] ", sql end
+        if this.session.debug: println "[salix] ", sql end
         r := this.session.conn.Query(sql)
         if not r.Ok():
             _ := r.Close()
